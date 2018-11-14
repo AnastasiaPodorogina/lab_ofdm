@@ -48,6 +48,11 @@ def grouper(N_c, iterable, fillvalue = complex(0)):
 	groups = list(itertools.zip_longest(*([iter(iterable)]*N_c), fillvalue = fillvalue))
 	return np.array(groups)
 
+def add_guard_interval(T_guard, N_fft ,new_group):
+	tmp_ifft = copy.deepcopy(new_group)
+	tmp = np.insert(tmp_ifft , 0, tmp_ifft[-T_guard:])
+	return tmp
+
 def upsampler(N_fft, N_c, groups):
 	""" Дополняет массивы до N_fft """
 	list_nfft = list()
@@ -60,15 +65,20 @@ def upsampler(N_fft, N_c, groups):
 	return np.array(list_nfft)	
 
 
-def OFDM_signal(groups):
+def OFDM_signal(groups, T_guard, N_fft):
 	""" Обратное Фурье преобразование """
 	ofdm_frame = list()
 	
 	for group in groups:
 		new_group = np.fft.ifft(group)
-		ofdm_frame.append(new_group)
+		guard_symbol = add_guard_interval(T_guard, N_fft, new_group)
+		ofdm_frame.append(guard_symbol)
 	
 	return ofdm_frame
+
+def remove_guard_interval(T_guard, group):
+	tmp = copy.deepcopy(groups)
+	return tmp[T_guard - 1:]
 
 
 def demapper(message, data_arr, dictionary, norm=None):
@@ -85,15 +95,17 @@ def demapper(message, data_arr, dictionary, norm=None):
   	  
 
 			  	  
-def receiver(N_c, N_fft, ofdm_frame):
+def receiver(N_c, N_fft, ofdm_frame, T_guard):
 	""" Фурье преобразование """
 	ofdm_simv = list()
 	array = np.zeros(N_fft, dtype=complex)
 	print(ofdm_frame)
 	for group in ofdm_frame:
 		array = group
-		fft_arr = np.fft.fft(array)
-		ofdm_simv += fft_arr[0: N_c].tolist()
+		#arr_1 = remove_guard_interval(T_guard, array)
+		arr_1 = array[T_guard:]
+		fft_arr = np.fft.fft(arr_1)
+		ofdm_simv += fft_arr[: N_c].tolist()
 	return ofdm_simv
 
 def scrambler(input_array=None, register=bitarray.bitarray('100101010000000')) -> bitarray:
@@ -135,6 +147,7 @@ def verification(input_msg, output_msg):
 if __name__ == '__main__':
 	N_c = 200
 	N_fft = 1024
+	T_guard = N_fft // 8
 
 	msg = create_message()
 	norm = norm(QAM_data_arr)
@@ -144,10 +157,15 @@ if __name__ == '__main__':
 
 	ofdm_signal = grouper(N_c, mapped_msg)
 	groups = upsampler(N_fft, N_c, ofdm_signal)
-	ofdm_frame = OFDM_signal(groups)
-	ofdm_simbol = receiver(N_c, N_fft, ofdm_frame)
+	ofdm_frame = OFDM_signal(groups, T_guard, N_fft)
+	ofdm_simbol = receiver(N_c, N_fft, ofdm_frame, T_guard)
+	print(ofdm_simbol)
 	output_msg = demapper(ofdm_simbol, QAM_data_arr, QAM, norm)
+	#print(output_msg)
 	scrambled_output_msg = scrambler(output_msg)
+	#print(msg)
+	#print('_____________________')
+	#print(scrambled_output_msg)
 	verificated = verification(msg, scrambled_output_msg)
 
 	plt.plot(verificated)
