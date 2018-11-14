@@ -17,7 +17,7 @@ logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 def norm(data_arr):
 	power = list(map(lambda x: np.square(np.abs(x)), data_arr))
-	mean_power = np.mean(power)
+	mean_power = np.sqrt(np.mean(power))
 	return mean_power
 
 
@@ -33,9 +33,10 @@ def create_message(path='wind.png'):
 	return msg
 
 
-def mapper(msg, dictionary):	
+def mapper(msg, dictionary, norm=None):	
 	""" Отображение битовой последовательности на созвездие """
 	complex_msg = list(map(complex, msg.decode(dictionary)))
+	norm_msg = list(map(lambda x,y=norm: x/y, complex_msg)) 
 	logging.debug('complex message = {}'.format(complex_msg))
 	return complex_msg
 
@@ -70,16 +71,17 @@ def OFDM_signal(groups):
 	return ofdm_frame
 
 
-def demapper(message, data_arr, dictionary):
+def demapper(message, data_arr, dictionary, norm=None):
 	""" Определяет к какой точке созвездия относятся принятые биты """
 	dist_arr = abs(np.asarray(message).reshape((-1, 1)) - np.asarray(data_arr).reshape((1, -1)))
 	min_arg = dist_arr.argmin(axis=1)
 	hard_decidion = np.asarray(data_arr)[min_arg]
 	
+	norm_msg = list(map(lambda x,y=norm: x*y, hard_decidion))	
 	bit_msg = bitarray.bitarray()
 	ms = list(map(lambda x: '{:.1f}'.format(x), hard_decidion))
 	bit_msg.encode(dictionary, ms) 
-	return bit_msg
+	return bit_msg[0:66632]
   	  
 
 			  	  
@@ -94,6 +96,37 @@ def receiver(N_c, N_fft, ofdm_frame):
 		ofdm_simv += fft_arr[0: N_c].tolist()
 	return ofdm_simv
 
+def scrambler(input_array=None, register=bitarray.bitarray('100101010000000')) -> bitarray:
+    """Рандомизатор входной(выходной) последовательности
+        :param input_array: входящий поток
+        :param register: инициализирующая последовательность
+        :return: рандомизированная последовательность
+    """
+    output_bit_array = bitarray.bitarray()
+    temp_input_array = input_array.copy()
+    temp_register = register.copy()
+    register_size = temp_register.length()
+
+    temp_input_array.reverse()
+
+    for bit in temp_input_array:
+        last_bit_xor = temp_register[register_size - 1]
+        pre_last_bit_xor = temp_register[register_size - 2]
+        xored_bit = pre_last_bit_xor ^ last_bit_xor
+        temp_register.insert(0, xored_bit)
+        temp_register.pop()
+        input_bit_xor = xored_bit ^ bit
+        output_bit_array.insert(0, input_bit_xor)
+
+    return output_bit_array	
+
+def peak_factor(msg):
+	power = list(map(lambda x: np.square(np.abs(x)), msg))
+	max_power = np.max(power)
+	mean_power = np.mean(power)
+	peak_factor = max_power / mean_power
+	return 20*log10(peak_factor)    
+
 
 def verification(input_msg, output_msg):
 	return np.array(input_msg)[0:66632] ^ np.array(output_msg)[0:66632]
@@ -104,13 +137,18 @@ if __name__ == '__main__':
 	N_fft = 1024
 
 	msg = create_message()
+	norm = norm(QAM_data_arr)
+	scrambled_msg = scrambler(msg)
 	#transmitter
-	ofdm_signal = grouper(N_c, mapper(msg, QAM))
+	mapped_msg = mapper(scrambled_msg, QAM, norm)
+
+	ofdm_signal = grouper(N_c, mapped_msg)
 	groups = upsampler(N_fft, N_c, ofdm_signal)
 	ofdm_frame = OFDM_signal(groups)
 	ofdm_simbol = receiver(N_c, N_fft, ofdm_frame)
-	output_msg = demapper(ofdm_simbol, QAM_data_arr, QAM)
-	verificated = verification(msg, output_msg)
+	output_msg = demapper(ofdm_simbol, QAM_data_arr, QAM, norm)
+	scrambled_output_msg = scrambler(output_msg)
+	verificated = verification(msg, scrambled_output_msg)
 
 	plt.plot(verificated)
 	plt.show()
