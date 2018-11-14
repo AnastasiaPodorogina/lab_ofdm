@@ -8,10 +8,10 @@ import random
 import sys
 import scipy as sp
 
-from constants import QAM, QAM_data_arr
+from constants import QPSK, QPSK_data_arr
 from scipy.fftpack import fft, ifft
 
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 #Create message bits
 
@@ -38,7 +38,7 @@ def mapper(msg, dictionary, norm=None):
 	complex_msg = list(map(complex, msg.decode(dictionary)))
 	norm_msg = list(map(lambda x,y=norm: x/y, complex_msg)) 
 	logging.debug('complex message = {}'.format(complex_msg))
-	return complex_msg
+	return norm_msg
 
 
 # create OFDM-signal
@@ -59,7 +59,7 @@ def upsampler(N_fft, N_c, groups):
 	
 	for group in groups:
 		new_group = np.insert(group, 0, np.zeros(1, dtype=complex))
-		new2 = np.append(group, np.zeros(N_fft - N_c - 1, dtype=complex))
+		new2 = np.append(group, np.zeros(N_fft - N_c, dtype=complex))
 		list_nfft.append(new2)	
 	
 	return np.array(list_nfft)	
@@ -73,7 +73,6 @@ def OFDM_signal(groups, T_guard, N_fft):
 		new_group = np.fft.ifft(group)
 		guard_symbol = add_guard_interval(T_guard, N_fft, new_group)
 		ofdm_frame.append(guard_symbol)
-	
 	return ofdm_frame
 
 def remove_guard_interval(T_guard, group):
@@ -83,11 +82,11 @@ def remove_guard_interval(T_guard, group):
 
 def demapper(message, data_arr, dictionary, norm=None):
 	""" Определяет к какой точке созвездия относятся принятые биты """
-	dist_arr = abs(np.asarray(message).reshape((-1, 1)) - np.asarray(data_arr).reshape((1, -1)))
+	norm_msg = list(map(lambda x,y=norm: x*y, message))	
+	dist_arr = abs(np.asarray(norm_msg).reshape((-1, 1)) - np.asarray(data_arr).reshape((1, -1)))
 	min_arg = dist_arr.argmin(axis=1)
 	hard_decidion = np.asarray(data_arr)[min_arg]
 	
-	norm_msg = list(map(lambda x,y=norm: x*y, hard_decidion))	
 	bit_msg = bitarray.bitarray()
 	ms = list(map(lambda x: '{:.1f}'.format(x), hard_decidion))
 	bit_msg.encode(dictionary, ms) 
@@ -99,21 +98,18 @@ def receiver(N_c, N_fft, ofdm_frame, T_guard):
 	""" Фурье преобразование """
 	ofdm_simv = list()
 	array = np.zeros(N_fft, dtype=complex)
-	print(ofdm_frame)
+	#print(ofdm_frame)
 	for group in ofdm_frame:
 		array = group
 		#arr_1 = remove_guard_interval(T_guard, array)
 		arr_1 = array[T_guard:]
 		fft_arr = np.fft.fft(arr_1)
 		ofdm_simv += fft_arr[: N_c].tolist()
+	
 	return ofdm_simv
 
 def scrambler(input_array=None, register=bitarray.bitarray('100101010000000')) -> bitarray:
-    """Рандомизатор входной(выходной) последовательности
-        :param input_array: входящий поток
-        :param register: инициализирующая последовательность
-        :return: рандомизированная последовательность
-    """
+
     output_bit_array = bitarray.bitarray()
     temp_input_array = input_array.copy()
     temp_register = register.copy()
@@ -133,11 +129,14 @@ def scrambler(input_array=None, register=bitarray.bitarray('100101010000000')) -
     return output_bit_array	
 
 def peak_factor(msg):
-	power = list(map(lambda x: np.square(np.abs(x)), msg))
+	power = list(map(lambda x: np.square(np.abs(x)), np.array(msg)))	
+	#print(power)
 	max_power = np.max(power)
+	#print(max_power)
 	mean_power = np.mean(power)
+	#print(mean_power)
 	peak_factor = max_power / mean_power
-	return 20*log10(peak_factor)    
+	return 20*np.log10(peak_factor)    
 
 
 def verification(input_msg, output_msg):
@@ -150,26 +149,22 @@ if __name__ == '__main__':
 	T_guard = N_fft // 8
 
 	msg = create_message()
-	norm = norm(QAM_data_arr)
-	scrambled_msg = scrambler(msg)
+	norm = norm(QPSK_data_arr)
+	#scrambled_msg = scrambler(msg)
 	#transmitter
-	mapped_msg = mapper(scrambled_msg, QAM, norm)
-
+	mapped_msg = mapper(msg, QPSK, norm)
 	ofdm_signal = grouper(N_c, mapped_msg)
 	groups = upsampler(N_fft, N_c, ofdm_signal)
 	ofdm_frame = OFDM_signal(groups, T_guard, N_fft)
+	peak_factor = peak_factor(ofdm_frame)
+	print(peak_factor)
 	ofdm_simbol = receiver(N_c, N_fft, ofdm_frame, T_guard)
-	print(ofdm_simbol)
-	output_msg = demapper(ofdm_simbol, QAM_data_arr, QAM, norm)
-	#print(output_msg)
-	scrambled_output_msg = scrambler(output_msg)
-	#print(msg)
-	#print('_____________________')
-	#print(scrambled_output_msg)
-	verificated = verification(msg, scrambled_output_msg)
+	output_msg = demapper(ofdm_simbol, QPSK_data_arr, QPSK, norm)
+	#scrambled_output_msg = scrambler(output_msg)
+	verificated = verification(msg, output_msg)
 
-	plt.plot(verificated)
-	plt.show()
+	#plt.plot(verificated)
+	#plt.show()
 
 
 
